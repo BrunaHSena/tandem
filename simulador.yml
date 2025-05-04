@@ -1,0 +1,19 @@
+filas:
+  - id: Fila1
+    servidores: 2
+    capacidade: 3
+    atendimento_min: 3
+    atendimento_max: 4
+    roteamento: []
+
+  - id: Fila2
+    servidores: 1
+    capacidade: 5
+    atendimento_min: 2
+    atendimento_max: 3
+    roteamento: []
+
+chegadas_externas:
+  - fila: Fila1
+    intervalo_min: 1
+    intervalo_max: 4
