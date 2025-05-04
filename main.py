@@ -1,5 +1,4 @@
-import yaml
-import random
+import yaml, random
 from fila import Fila
 from evento import Evento
 from escalonador import Escalonador
@@ -11,101 +10,92 @@ def next_random():
     aleatorios_usados += 1
     return random.random()
 
-def sortear_tempo(min_valor, max_valor):
-    return min_valor + (max_valor - min_valor) * next_random()
+def sortear(minimo, maximo):
+    return minimo + (maximo - minimo) * next_random()
 
-def carregar_modelo(arquivo):
-    with open(arquivo, 'r') as f:
+def carregar_yaml(path):
+    with open(path, 'r') as f:
         return yaml.safe_load(f)
 
-def inicializar_filas(dados):
-    filas = {}
-    for f in dados['filas']:
-        fila = Fila(f['id'], f['servidores'], f['capacidade'], f['atendimento_min'], f['atendimento_max'])
-        filas[f['id']] = fila
-    return filas
-
-def imprimir_resultados(filas, tempo_global):
-    for id, fila in filas.items():
-        print(f"\n--- Resultados da {fila.nome} ---")
-        total_tempo = sum(fila.tempo_estado.values())
-        for estado, tempo in sorted(fila.tempo_estado.items()):
-            prob = tempo / tempo_global if tempo_global > 0 else 0
-            print(f"Estado {estado} cliente(s): Tempo acumulado = {tempo:.2f}, Probabilidade = {prob:.5f}")
-        print(f"Clientes perdidos: {fila.perdas}")
-    print(f"\nTempo total de simulação: {tempo_global:.2f}")
-
-def main():
+def simular():
     global aleatorios_usados
     aleatorios_usados = 0
 
-    dados = carregar_modelo('simulador.yml')
-    filas = inicializar_filas(dados)
+    dados = carregar_yaml("simulador.yml")
+    filas = {f['id']: Fila(f['id'], f['servidores'], f['capacidade'],
+                           f['atendimento_min'], f['atendimento_max']) for f in dados['filas']}
 
-    # Define roteamento: 100% dos clientes da Fila1 vão para Fila2
     fila1 = filas['Fila1']
     fila2 = filas['Fila2']
-    fila1.roteamento = {fila2: 1.0}
-    fila2.roteamento = {}  # Clientes saem após atendimento
 
     escalonador = Escalonador()
+    tempo = 1.5
+    escalonador.adicionar(Evento(tempo, 'CHEGADA', fila1))
 
-    tempo_atual = 1.5
-    escalonador.adicionar_evento(Evento(tempo_atual, 'CHEGADA', fila1))
+    chegada_cfg = dados['chegadas_externas'][0]
 
-    while aleatorios_usados < 100000 and not escalonador.esta_vazio():
-        evento = escalonador.proximo_evento()
+    while aleatorios_usados < 100000:
+        evento = escalonador.proximo()
+        if evento is None:
+            break
 
-        for fila in filas.values():
-            fila.atualiza_tempo_estado(evento.tempo)
+        tempo_passado = evento.tempo - tempo
+        tempo = evento.tempo
 
-        tempo_atual = evento.tempo
-        fila = evento.fila_origem
+        for f in filas.values():
+            estado = f.ocupados + f.fila
+            f.tempo_estado[estado] = f.tempo_estado.get(estado, 0) + tempo_passado
 
         if evento.tipo == 'CHEGADA':
-            if fila.ocupados < fila.servidores:
-                fila.ocupados += 1
-                tempo_serv = sortear_tempo(fila.atendimento_min, fila.atendimento_max)
-                destino = list(fila.roteamento.keys())[0]
-                escalonador.adicionar_evento(Evento(tempo_atual + tempo_serv, 'PASSAGEM', fila, destino))
-            elif fila.fila_espera < fila.capacidade:
-                fila.fila_espera += 1
+            f = evento.origem
+            if f.ocupados < f.servidores:
+                f.ocupados += 1
+                servico = sortear(f.atendimento_min, f.atendimento_max)
+                escalonador.adicionar(Evento(tempo + servico, 'PASSAGEM', f, fila2))
+            elif f.fila < f.capacidade:
+                f.fila += 1
             else:
-                fila.perdas += 1
+                f.perdas += 1
 
-            # Agendar próxima chegada externa
-            chegada = dados['chegadas_externas'][0]
-            intervalo = sortear_tempo(chegada['intervalo_min'], chegada['intervalo_max'])
-            escalonador.adicionar_evento(Evento(tempo_atual + intervalo, 'CHEGADA', fila))
+            intervalo = sortear(chegada_cfg['intervalo_min'], chegada_cfg['intervalo_max'])
+            escalonador.adicionar(Evento(tempo + intervalo, 'CHEGADA', f))
 
         elif evento.tipo == 'PASSAGEM':
-            fila.ocupados -= 1
-            if fila.fila_espera > 0:
-                fila.fila_espera -= 1
-                fila.ocupados += 1
-                destino = list(fila.roteamento.keys())[0]
-                tempo_serv = sortear_tempo(fila.atendimento_min, fila.atendimento_max)
-                escalonador.adicionar_evento(Evento(tempo_atual + tempo_serv, 'PASSAGEM', fila, destino))
+            f1 = evento.origem
+            f2 = evento.destino
+            f1.ocupados -= 1
 
-            destino = evento.fila_destino
-            if destino.ocupados < destino.servidores:
-                destino.ocupados += 1
-                tempo_serv = sortear_tempo(destino.atendimento_min, destino.atendimento_max)
-                escalonador.adicionar_evento(Evento(tempo_atual + tempo_serv, 'SAIDA', destino))
-            elif destino.fila_espera < destino.capacidade:
-                destino.fila_espera += 1
+            if f1.fila > 0:
+                f1.fila -= 1
+                f1.ocupados += 1
+                servico = sortear(f1.atendimento_min, f1.atendimento_max)
+                escalonador.adicionar(Evento(tempo + servico, 'PASSAGEM', f1, f2))
+
+            if f2.ocupados < f2.servidores:
+                f2.ocupados += 1
+                servico = sortear(f2.atendimento_min, f2.atendimento_max)
+                escalonador.adicionar(Evento(tempo + servico, 'SAIDA', f2))
+            elif f2.fila < f2.capacidade:
+                f2.fila += 1
             else:
-                destino.perdas += 1
+                f2.perdas += 1
 
         elif evento.tipo == 'SAIDA':
-            fila.ocupados -= 1
-            if fila.fila_espera > 0:
-                fila.fila_espera -= 1
-                fila.ocupados += 1
-                tempo_serv = sortear_tempo(fila.atendimento_min, fila.atendimento_max)
-                escalonador.adicionar_evento(Evento(tempo_atual + tempo_serv, 'SAIDA', fila))
+            f = evento.origem
+            f.ocupados -= 1
+            if f.fila > 0:
+                f.fila -= 1
+                f.ocupados += 1
+                servico = sortear(f.atendimento_min, f.atendimento_max)
+                escalonador.adicionar(Evento(tempo + servico, 'SAIDA', f))
 
-    imprimir_resultados(filas, tempo_atual)
+    for f in filas.values():
+        print(f"\n--- Resultados da {f.id} ---")
+        total = sum(f.tempo_estado.values())
+        for estado, t in sorted(f.tempo_estado.items()):
+            print(f"Estado {estado}: Tempo = {t:.2f}, Prob = {t / tempo:.5f}")
+        print(f"Clientes perdidos: {f.perdas}")
+    print(f"\nTempo total de simulação: {tempo:.2f}")
 
 if __name__ == '__main__':
-    main()
+    simular()

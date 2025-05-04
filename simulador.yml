@@ -4,14 +4,12 @@ filas:
     capacidade: 3
     atendimento_min: 3
     atendimento_max: 4
-    roteamento: []
 
   - id: Fila2
     servidores: 1
     capacidade: 5
     atendimento_min: 2
     atendimento_max: 3
-    roteamento: []
 
 chegadas_externas:
   - fila: Fila1
